@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#111111">
+<title>EX30 Dash</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300..700&display=swap" rel="stylesheet">
+<style>
+/* VOICE: a car's driver display – calm, exact, nothing decorative.
+   IDEA: the EX30 driver strip, same 640x172 layout as the ESP32 screen, scaled to the phone.
+   PICTURE: the strip itself (speed, power bar, consumption card, road + car), full width.
+   COLOUR and TYPE: charcoal #2b2b2b ground, white figures, green regen, red sign ring; DM Sans.
+   LAYOUT: strip on top, trip figures below, source controls at the bottom; drawer for OBD tools. */
+:root{color-scheme:dark;--bg:#111;--strip:#2b2b2b;--card:#3a3a3a;--ink:#fff;--dim:#8c8c8c;--line:#555;--regen:#3cc85a;--red:#d4202a;--amber:#e0a020}
+*{box-sizing:border-box;min-width:0}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 "DM Sans",system-ui,-apple-system,sans-serif;overflow:hidden;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+#app{height:100%;display:flex;flex-direction:column;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+#stripWrap{background:var(--strip);flex:none;position:relative;overflow:hidden;cursor:pointer}
+#strip{position:absolute;top:0;width:640px;height:172px;transform-origin:0 0}
+#strip>*{position:absolute}
+.g{width:24px;left:12px;text-align:center;font-size:18px;font-weight:500;color:var(--dim);line-height:22px}
+.g.on{color:var(--ink);font-weight:600;font-size:20px}
+#speed{left:62px;width:160px;text-align:right;font-size:96px;font-weight:480;font-variation-settings:"opsz" 40;line-height:1;top:40px;letter-spacing:-1px;font-variant-numeric:tabular-nums}
+#unit{left:162px;width:60px;text-align:right;top:125px;font-size:14px;font-weight:500}
+#sign{left:233px;top:77px;width:36px;height:36px;border-radius:50%;background:#fff;border:4px solid var(--red);color:#111;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;letter-spacing:-.3px}
+#range{left:76px;width:74px;text-align:right;top:145px;font-size:14px;font-weight:500}
+#bat{left:160px;top:149px;width:18px;height:10px;border:1px solid #fff;border-radius:2px}
+#batNub{left:178px;top:152px;width:2px;height:4px;background:#fff;border-radius:1px}
+#batFill{left:162px;top:151px;height:6px;background:#fff;border-radius:1px}
+#soc{left:185px;top:145px;font-size:14px;font-weight:500}
+#track{left:46px;top:55px;width:4px;height:90px;background:var(--line);border-radius:2px}
+#zero{left:44px;top:100px;width:8px;height:1px;background:#9a9a9a}
+#pfill{left:46px;width:4px;border-radius:1px;background:#fff}
+#card{left:283px;top:30px;width:58px;height:116px;background:var(--card);border-radius:8px;text-align:center}
+#card>*{position:absolute;left:0;width:58px}
+#cmode{top:9px;font-size:12px;font-weight:500;color:var(--dim);line-height:15px}
+#cdiv{top:31px;left:9px!important;width:40px!important;height:1px;background:var(--line)}
+#cval{top:44px;font-size:24px;font-weight:600;line-height:30px;letter-spacing:-.4px;font-variant-numeric:tabular-nums}
+#cu1{top:78px;font-size:12px;color:var(--dim);font-weight:500}
+#cu2{top:93px;font-size:12px;color:var(--dim);font-weight:500}
+#road{left:0;top:0;width:640px;height:172px}
+#car{left:401px;top:96px;width:70px;height:62px}
+#lights{left:600px;top:8px;width:30px;height:20px}
+#wiper{left:602px;top:138px;width:28px;height:24px;opacity:.5}
+#stats{flex:1;display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:1px;background:#1b1b1b;border-top:1px solid #000;align-content:stretch}
+.st{background:#1f1f1f;padding:8px 14px;display:flex;flex-direction:column;justify-content:center}
+.st b{font-size:clamp(18px,2.6vw,24px);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.st span{font-size:13px;color:var(--dim)}
+#bar{flex:none;display:flex;gap:10px;align-items:center;padding:8px 14px;background:#151515;flex-wrap:wrap}
+.seg{display:flex;background:#262626;border-radius:10px;padding:3px}
+.seg button,.btn{font:inherit;font-size:15px;color:var(--ink);background:none;border:0;border-radius:8px;min-height:38px;padding:0 14px;cursor:pointer}
+.seg button.on{background:#4a4a4a}
+.btn{background:#2e2e2e}
+.btn.pri{background:#e8e8e8;color:#111;font-weight:600}
+button:focus-visible{outline:2px solid #fff;outline-offset:2px}
+#status{flex:1;font-size:13px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:120px}
+#status.err{color:#ff8a7a}
+#drawer{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:5}
+#drawer.open{display:block}
+#panel{position:absolute;right:0;top:0;bottom:0;width:min(560px,100%);background:#1a1a1a;padding:calc(14px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 14px 16px;overflow:auto;-webkit-user-select:text;user-select:text}
+#panel h2{font-size:17px;margin:14px 0 6px;font-weight:600}
+#panel p{font-size:13px;color:#aaa;margin:4px 0 8px}
+#log{background:#0d0d0d;border-radius:8px;padding:8px;height:150px;overflow:auto;font:12px/1.45 ui-monospace,Menlo,monospace;white-space:pre-wrap;color:#cfe}
+.row{display:flex;gap:6px;margin:6px 0;flex-wrap:wrap}
+input,select{font:16px "DM Sans",system-ui,sans-serif;background:#262626;color:#fff;border:1px solid #3a3a3a;border-radius:8px;padding:7px 9px;min-height:40px}
+#cmd{flex:1}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td{padding:3px 2px;vertical-align:middle}
+td input,td select{width:100%;font-size:14px;min-height:34px;padding:4px 6px}
+#pids td:first-child{width:28px}
+.note{font-size:12px;color:#888}
+#hint{display:none;text-align:center;font-size:13px;color:var(--dim);padding:8px}
+@media (orientation:portrait){#stats{grid-template-columns:repeat(2,minmax(0,1fr));align-content:start}.st{padding:14px}#hint{display:block}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stripWrap" title="Tik om te wisselen: nu / 1 min / 5 min">
+    <div id="strip">
+      <svg id="road" viewBox="0 0 640 172"></svg>
+      <svg id="car" viewBox="0 0 70 62">
+        <defs><filter id="sh" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="1.5"/></filter></defs>
+        <ellipse cx="35" cy="55" rx="26" ry="4" fill="#000" opacity=".45" filter="url(#sh)"/>
+        <rect x="8" y="44" width="11" height="13" rx="2" fill="#121214"/><rect x="51" y="44" width="11" height="13" rx="2" fill="#121214"/>
+        <rect x="5" y="30" width="60" height="22" rx="6" fill="#4a4e56"/><rect x="9" y="45" width="52" height="7" rx="3" fill="#282a2e"/>
+        <polygon points="14,10 56,10 63,32 7,32" fill="#545860"/><rect x="13" y="7" width="44" height="7" rx="3.5" fill="#545860"/>
+        <polygon points="17,12 53,12 58,27 12,27" fill="#1a1c20"/><polygon points="19,13 33,13 26,26 14,26" fill="#2c2f36"/>
+        <ellipse cx="4.5" cy="28" rx="3.5" ry="3" fill="#464a52"/><ellipse cx="65.5" cy="28" rx="3.5" ry="3" fill="#464a52"/>
+        <rect x="7" y="33" width="56" height="3" rx="1" fill="#96141c"/><rect x="8" y="33.6" width="14" height="1.8" rx=".9" fill="#eb2d37"/><rect x="48" y="33.6" width="14" height="1.8" rx=".9" fill="#eb2d37"/>
+        <rect x="27" y="39" width="16" height="5" rx="1" fill="#3a3d44"/><line x1="16" y1="9" x2="54" y2="9" stroke="#82878f" stroke-width="1"/>
+      </svg>
+      <div class="g" id="gR" style="top:56px">R</div><div class="g" id="gN" style="top:79px">N</div><div class="g" id="gD" style="top:102px">D</div>
+      <svg style="left:14px;top:130px;width:20px;height:20px" viewBox="0 0 20 20" fill="none" stroke="#969696" stroke-width="1.8"><circle cx="10" cy="10" r="8.5"/><circle cx="10" cy="11" r="2.3" fill="#969696"/><path d="M2.5 9.5 7.5 10.5M12.5 10.5 17.5 9.5M10 13v5"/></svg>
+      <div id="track"></div><div id="zero"></div><div id="pfill"></div>
+      <svg style="left:56px;top:90px;width:12px;height:20px" viewBox="0 0 12 20"><polygon points="7.5,.5 1,11.5 5.8,11.5 4,19.5 11,7.5 6.3,7.5 8.5,.5" fill="#fff"/></svg>
+      <div id="speed">0</div><div id="unit">km/h</div>
+      <div id="sign">50</div>
+      <div id="range">-- km</div><div id="bat"></div><div id="batNub"></div><div id="batFill" style="width:7px"></div><div id="soc">--%</div>
+      <div id="card"><div id="cmode">NU</div><div id="cdiv"></div><div id="cval">--</div><div id="cu1">kWh</div><div id="cu2">/100km</div></div>
+      <svg id="lights" viewBox="0 0 30 20" fill="none" stroke="#3cc85a" stroke-width="1.7"><path d="M13 4a5 6 0 0 0 0 12zM17 4a5 6 0 0 1 0 12zM2 5h5M2 10h5M2 15h5M23 5h5M23 10h5M23 15h5"/></svg>
+      <svg id="wiper" viewBox="0 0 28 24" fill="none" stroke="#c8c8c8" stroke-width="1.7"><path d="M3 7l1 13h20l1-13M3 7q11-6 22 0M14 20 8 9"/><circle cx="17" cy="10" r="1" fill="#c8c8c8"/><circle cx="20" cy="13" r="1" fill="#c8c8c8"/><circle cx="18" cy="15" r="1" fill="#c8c8c8"/></svg>
+    </div>
+  </div>
+  <div id="hint">Draai je telefoon voor het volledige scherm · gemiddelden in kWh/100 km</div>
+  <div id="stats">
+    <div class="st"><b id="s1">--</b><span>Gem. 1 min</span></div>
+    <div class="st"><b id="s5">--</b><span>Gem. 5 min</span></div>
+    <div class="st"><b id="sTrip">--</b><span>Gem. rit</span></div>
+    <div class="st"><b id="sKm">0.0</b><span>Rit km</span></div>
+    <div class="st"><b id="sUsed">0.00</b><span>kWh verbruikt</span></div>
+    <div class="st"><b id="sRegen">0.00</b><span>kWh regen</span></div>
+    <div class="st"><b id="sTemp">--</b><span>Accu °C</span></div>
+    <div class="st"><b id="sPow">--</b><span>kW nu</span></div>
+  </div>
+  <div id="bar">
+    <div class="seg" role="tablist" aria-label="Databron">
+      <button id="srcDemo" class="on">Demo</button><button id="srcGps">GPS</button><button id="srcObd">OBD</button>
+    </div>
+    <div id="status">Demo: gesimuleerde rit</div>
+    <button class="btn" id="resetTrip">Rit reset</button>
+    <button class="btn" id="tools">OBD-tools</button>
+  </div>
+</div>
+
+<div id="drawer"><div id="panel">
+  <div class="row" style="justify-content:space-between;align-items:center"><b style="font-size:18px">OBD-tools</b><button class="btn" id="closeTools">Sluiten</button></div>
+  <p>Werkt met een Bluetooth LE OBD-dongle (Vgate iCar Pro BLE 4.0) in een browser met Web Bluetooth, zoals <b>Bluefy</b> op iPhone. Safari zelf ondersteunt geen Bluetooth.</p>
+  <div class="row"><button class="btn pri" id="connect">Verbind dongle</button><button class="btn" id="disconnect">Verbreek</button><button class="btn" id="scan">Scan standaard-PIDs</button></div>
+  <h2>Terminal</h2>
+  <div id="log"></div>
+  <div class="row"><input id="cmd" placeholder="bv. 010D of ATRV" autocapitalize="characters" autocomplete="off" spellcheck="false"><button class="btn" id="send">Stuur</button><button class="btn" id="copyLog">Kopieer log</button></div>
+  <h2>Eigen PIDs (EX30-specifiek)</h2>
+  <p>Vul hier de waarden in die je in Car Scanner vindt. Header = ECU-adres (ATSH), commando = bv. 22xxxx, formule met A, B, C, D (de eerste bytes na het antwoord). Doel = welk veld op het scherm.</p>
+  <table id="pids"><thead><tr><td>Aan</td><td>Naam</td><td>Header</td><td>Cmd</td><td>Formule</td><td>Doel</td><td></td></tr></thead><tbody></tbody></table>
+  <div class="row"><button class="btn" id="addPid">+ PID</button><button class="btn" id="savePids">Opslaan</button></div>
+  <p class="note">Standaard gepolld: 010D snelheid, 015B accu %, 0146 buitentemp. Wat de EX30 niet beantwoordt, blijft "--".</p>
+</div></div>
+
+<script>
+{
+const $ = id => document.getElementById(id);
+const DEMO_LIMITS = true;
+
+/* ---------- state ---------- */
+const S = { speed: 0, power: null, soc: null, range: null, gear: 'D', limit: 0, lights: false, wiper: false, temp: null };
+let source = 'demo';
+let cardMode = 0;
+
+/* ---------- strip scaling ---------- */
+const wrap = $('stripWrap'), strip = $('strip');
+function fit() {
+  const w = wrap.clientWidth, h = window.innerHeight;
+  const portrait = h > w;
+  const sc = Math.min(w / 640, (portrait ? h * 0.32 : h * 0.6) / 172);
+  strip.style.transform = `scale(${sc})`;
+  wrap.style.height = (172 * sc) + 'px';
+  strip.style.left = Math.max(0, (w - 640 * sc) / 2) + 'px';
+}
+new ResizeObserver(fit).observe(wrap); window.addEventListener('resize', fit); fit();
+
+/* ---------- road (same geometry as the ESP32 screen) ---------- */
+(function road() {
+  const lines = [[262,172,372,60,0],[382,172,418,60,1],[490,172,462,60,1],[610,172,500,60,0]];
+  let svg = '';
+  for (const [x0,y0,x1,y1,dash] of lines) for (let k = 0; k < 6; k++) {
+    const ta = 1 - Math.pow(1 - k / 6, 1.35); let tb = 1 - Math.pow(1 - (k + 1) / 6, 1.35);
+    if (dash) tb = ta + (tb - ta) * .55;
+    svg += `<line x1="${x0+(x1-x0)*ta}" y1="${y0+(y1-y0)*ta}" x2="${x0+(x1-x0)*tb}" y2="${y0+(y1-y0)*tb}" stroke="#6e6e6e" stroke-width="${dash?3:2}" stroke-opacity="${(230-k*36)/255}"/>`;
+  }
+  $('road').innerHTML = svg;
+})();
+
+/* ---------- consumption + trip ---------- */
+const HIST = 300, eH = new Float32Array(HIST), dH = new Float32Array(HIST);
+let head = 0, filled = 0, eAcc = 0, dAcc = 0, tAcc = 0;
+const trip = { km: 0, used: 0, regen: 0 };
+function integrate(dt) {
+  const v = Math.max(0, S.speed);
+  const dKm = v * dt / 3600; trip.km += dKm; dAcc += dKm;
+  if (S.power != null) {
+    const e = S.power * dt / 3600; eAcc += e;
+    if (e > 0) trip.used += e; else trip.regen -= e;
+  }
+  tAcc += dt;
+  if (tAcc >= 1) { eH[head] = eAcc; dH[head] = dAcc; head = (head + 1) % HIST; filled = Math.min(HIST, filled + 1); eAcc = dAcc = 0; tAcc -= 1; }
+}
+function avg(sec) {
+  if (S.power == null) return NaN;
+  const n = Math.min(sec, filled); let e = 0, d = 0;
+  for (let i = 1; i <= n; i++) { const k = (head - i + HIST) % HIST; e += eH[k]; d += dH[k]; }
+  return d < 0.05 ? NaN : e / d * 100;
+}
+const now = () => (S.power == null || S.speed < 3) ? NaN : S.power / S.speed * 100;
+const fmtC = v => isNaN(v) ? '--' : (Math.abs(v) >= 30 ? Math.round(v).toString() : v.toFixed(1));
+
+/* ---------- demo drive (same model as the ESP32 firmware) ---------- */
+const prof = [[0,3,50],[50,12,50],[82,18,100],[100,14,100],[70,10,70],[30,8,50],[0,5,50]];
+let seg = 0, hold = 0, t = 0, vTrue = 0, demoSoc = 81;
+function demoStep(dt) {
+  const [tk, hs, lim] = prof[seg]; let v = vTrue; const target = tk / 3.6; let a = 0;
+  if (Math.abs(target - v) > .05) {
+    a = target > v ? (v > 20 ? 1 : 1.8) : -2.2; v += a * dt;
+    if ((a > 0 && v > target) || (a < 0 && v < target)) v = target;
+  } else { hold += dt; if (hold >= hs) { hold = 0; seg = (seg + 1) % prof.length; } }
+  vTrue = v; t += dt;
+  let shown = v * 3.6; if (tk > 0 && Math.abs(target - v) < .05) shown += .8 * Math.sin(t * .7);
+  const m = 1850, f = m * a + .009 * m * 9.81 * (v > .1 ? 1 : 0) + .5 * 1.2 * .75 * v * v;
+  let p = f * v; p = p > 0 ? p / .88 : p * .7; p += 450 + 300 * Math.sin(t * 1.3) * (v > 1 ? 1 : 0);
+  demoSoc -= p / 1000 * dt / 3600 / 64 * 100; if (demoSoc < 5) demoSoc = 81;
+  Object.assign(S, { speed: Math.max(0, shown), power: p / 1000, soc: demoSoc, range: demoSoc * 3.58, gear: 'D', limit: lim, lights: true, wiper: false, temp: 24 });
+}
+
+/* ---------- render ---------- */
+const C = {};
+function set(id, txt) { if (C[id] !== txt) { C[id] = txt; $(id).textContent = txt; } }
+function render() {
+  set('speed', String(Math.round(S.speed)));
+  for (const g of 'RND') $('g' + g).classList.toggle('on', S.gear === g);
+  const pf = $('pfill');
+  if (S.power == null) { pf.style.height = '0px'; }
+  else if (S.power >= 0) { const h = Math.max(2, Math.min(1, S.power / 120) * 45); pf.style.top = (100 - h) + 'px'; pf.style.height = h + 'px'; pf.style.background = '#fff'; }
+  else { const h = Math.min(1, -S.power / 60) * 45; pf.style.top = '100px'; pf.style.height = h + 'px'; pf.style.background = 'var(--regen)'; }
+  $('sign').style.display = S.limit > 0 ? 'flex' : 'none'; set('sign', String(S.limit));
+  set('range', S.range == null ? '-- km' : Math.round(S.range) + ' km');
+  set('soc', S.soc == null ? '--%' : Math.round(S.soc) + '%');
+  $('batFill').style.width = (S.soc == null ? 0 : Math.max(1, Math.round(14 * S.soc / 100))) + 'px';
+  $('batFill').style.background = S.soc != null && S.soc <= 15 ? 'var(--amber)' : '#fff';
+  const cv = [now(), avg(60), avg(300)][cardMode];
+  set('cmode', ['NU', '1 MIN', '5 MIN'][cardMode]); set('cval', fmtC(cv));
+  $('cval').style.color = !isNaN(cv) && cv < 0 ? 'var(--regen)' : '#fff';
+  $('lights').style.display = S.lights ? 'block' : 'none';
+  $('wiper').style.opacity = S.wiper ? 1 : .5;
+  set('s1', fmtC(avg(60))); set('s5', fmtC(avg(300)));
+  set('sTrip', trip.km > .05 && S.power != null ? fmtC((trip.used - trip.regen) / trip.km * 100) : '--');
+  set('sKm', trip.km.toFixed(1)); set('sUsed', trip.used.toFixed(2)); set('sRegen', trip.regen.toFixed(2));
+  set('sTemp', S.temp == null ? '--' : Math.round(S.temp) + '');
+  set('sPow', S.power == null ? '--' : S.power.toFixed(1));
+}
+
+/* ---------- main loop 10 Hz ---------- */
+let last = performance.now();
+setInterval(() => {
+  const n = performance.now(), dt = Math.min(.5, (n - last) / 1000); last = n;
+  if (source === 'demo') demoStep(dt);
+  integrate(dt); render();
+}, 100);
+
+/* ---------- UI: card mode, wake lock ---------- */
+let wake = null;
+async function keepAwake() { try { if ('wakeLock' in navigator && !wake) { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => wake = null); } } catch (e) {} }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') keepAwake(); });
+wrap.addEventListener('click', () => { cardMode = (cardMode + 1) % 3; render(); keepAwake(); });
+function status(msg, err) { const s = $('status'); s.textContent = msg; s.classList.toggle('err', !!err); }
+$('resetTrip').addEventListener('click', () => { trip.km = trip.used = trip.regen = 0; eH.fill(0); dH.fill(0); filled = 0; render(); });
+
+/* ---------- sources ---------- */
+let gpsWatch = null, lastFix = null;
+function setSource(s) {
+  source = s; keepAwake();
+  for (const [id, k] of [['srcDemo','demo'],['srcGps','gps'],['srcObd','obd']]) $(id).classList.toggle('on', k === s);
+  if (gpsWatch != null) { navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null; }
+  if (s !== 'obd') pollStop = true;
+  if (s === 'demo') { status('Demo: gesimuleerde rit'); return; }
+  Object.assign(S, { speed: 0, power: null, soc: null, range: null, limit: 0, lights: false, temp: null });
+  if (s === 'gps') startGps();
+  if (s === 'obd') { status(ble.char ? 'OBD verbonden' : 'OBD: open OBD-tools en verbind de dongle'); if (ble.char) poll(); }
+  render();
+}
+$('srcDemo').addEventListener('click', () => setSource('demo'));
+$('srcGps').addEventListener('click', () => setSource('gps'));
+$('srcObd').addEventListener('click', () => setSource('obd'));
+
+function startGps() {
+  if (!('geolocation' in navigator)) { status('Geen GPS in deze browser', true); return; }
+  status('GPS: wachten op signaal…');
+  try {
+    gpsWatch = navigator.geolocation.watchPosition(p => {
+      let v = p.coords.speed;
+      if ((v == null || v < 0) && lastFix) {
+        const R = 6371000, toR = Math.PI / 180, a = lastFix.coords, b = p.coords;
+        const dLat = (b.latitude - a.latitude) * toR, dLon = (b.longitude - a.longitude) * toR;
+        const h = Math.sin(dLat/2)**2 + Math.cos(a.latitude*toR) * Math.cos(b.latitude*toR) * Math.sin(dLon/2)**2;
+        const d = 2 * R * Math.asin(Math.sqrt(h)), s = (p.timestamp - lastFix.timestamp) / 1000;
+        v = s > 0 ? d / s : 0;
+      }
+      lastFix = p; S.speed = Math.max(0, (v || 0) * 3.6); S.gear = 'D';
+      status(`GPS: ±${Math.round(p.coords.accuracy)} m (alleen snelheid en afstand)`);
+    }, e => status(e.code === 1 ? 'GPS geweigerd. Open deze pagina rechtstreeks in Safari of Bluefy en sta locatie toe.' : 'GPS-fout: ' + e.message, true),
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+  } catch (e) { status('GPS niet beschikbaar hier', true); }
+}
+
+/* ---------- OBD over Bluetooth LE (ELM327) ---------- */
+const ble = { dev: null, char: null, wr: null, buf: '', wait: null };
+let pollStop = true;
+const logEl = $('log');
+function log(s) { logEl.textContent += s + '\n'; if (logEl.textContent.length > 20000) logEl.textContent = logEl.textContent.slice(-15000); logEl.scrollTop = logEl.scrollHeight; }
+const SERVICES = [0xfff0, 0xffe0, 0x18f0, 'e7810a71-73ae-499d-8c15-faa9aef0c3f2'];
+
+async function connect() {
+  if (!navigator.bluetooth) { log('Web Bluetooth ontbreekt. Gebruik de Bluefy-browser op iPhone (Safari kan dit niet).'); status('Geen Bluetooth in deze browser', true); return; }
+  try {
+    ble.dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SERVICES });
+    log('Verbinden met ' + (ble.dev.name || 'dongle') + '…');
+    ble.dev.addEventListener('gattserverdisconnected', () => { ble.char = ble.wr = null; pollStop = true; status('Dongle losgekoppeld', true); log('Losgekoppeld'); });
+    const gatt = await ble.dev.gatt.connect();
+    for (const sv of await gatt.getPrimaryServices()) {
+      for (const c of await sv.getCharacteristics()) {
+        if (!ble.char && (c.properties.notify || c.properties.indicate)) ble.char = c;
+        if (!ble.wr && (c.properties.write || c.properties.writeWithoutResponse)) ble.wr = c;
+      }
+      if (ble.char && ble.wr) break;
+    }
+    if (!ble.char || !ble.wr) throw new Error('Geen bruikbare OBD-service gevonden');
+    await ble.char.startNotifications();
+    ble.char.addEventListener('characteristicvaluechanged', e => {
+      ble.buf += new TextDecoder().decode(e.target.value);
+      if (ble.buf.includes('>') && ble.wait) { const r = ble.buf.replace('>', '').trim(); ble.buf = ''; const w = ble.wait; ble.wait = null; w(r); }
+    });
+    for (const c of ['ATZ', 'ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATAT1', 'ATSP0', '0100']) log(c + ' → ' + (await cmd(c, c === 'ATZ' || c === '0100' ? 6000 : 2500)).replace(/\r/g, ' '));
+    status('OBD verbonden: ' + (ble.dev.name || 'dongle'));
+    setSource('obd');
+  } catch (e) { log('Fout: ' + e.message); status('Verbinden mislukt: ' + e.message, true); }
+}
+let q = Promise.resolve();
+function cmd(c, timeout = 2500) {
+  const run = () => new Promise(res => {
+    if (!ble.wr) return res('NO LINK');
+    ble.buf = '';
+    const to = setTimeout(() => { ble.wait = null; res('TIMEOUT'); }, timeout);
+    ble.wait = r => { clearTimeout(to); res(r); };
+    const data = new TextEncoder().encode(c + '\r');
+    (ble.wr.properties.writeWithoutResponse ? ble.wr.writeValueWithoutResponse(data) : ble.wr.writeValue(data)).catch(e => { clearTimeout(to); ble.wait = null; res('ERR ' + e.message); });
+  });
+  const p = q.then(run); q = p.catch(() => {}); return p;
+}
+/* bytes after the positive response header, e.g. "410D32" for "010D" -> [0x32] */
+function payload(resp, c) {
+  const want = (parseInt(c.slice(0, 2), 16) + 0x40).toString(16).toUpperCase().padStart(2, '0') + c.slice(2).toUpperCase();
+  const flat = resp.split(/[\r\n]+/).map(l => l.trim().replace(/^[0-9A-F]:/i, '').replace(/\s+/g, '')).filter(l => /^[0-9A-F]+$/i.test(l) && l.length > 3).join('');
+  const i = flat.toUpperCase().indexOf(want);
+  if (i < 0) return null;
+  const hex = flat.slice(i + want.length), out = [];
+  for (let k = 0; k + 1 < hex.length; k += 2) out.push(parseInt(hex.substr(k, 2), 16));
+  return out;
+}
+const STD = [
+  { c: '010D', f: b => b[0], to: 'speed' },
+  { c: '015B', f: b => b[0] * 100 / 255, to: 'soc' },
+  { c: '0146', f: b => b[0] - 40, to: 'ambient' },
+];
+let pids = [];
+try { pids = JSON.parse(localStorage.getItem('ex30dash.pids') || '[]'); } catch (e) {}
+if (!pids.length) pids = [{ on: false, name: 'Voorbeeld HV-vermogen', hdr: '7E4', cmd: '22XXXX', f: '((A*256+B)-32768)/100', to: 'power' }];
+const deadStd = new Set();
+async function poll() {
+  pollStop = false;
+  let curHdr = '';
+  while (!pollStop && ble.wr) {
+    for (const p of STD) {
+      if (deadStd.has(p.c) || pollStop) continue;
+      if (curHdr) { await cmd('ATSH7DF'); curHdr = ''; }
+      const b = payload(await cmd(p.c), p.c);
+      if (b && b.length) { const v = p.f(b); if (p.to === 'ambient') S.ambient = v; else S[p.to] = v; }
+      else deadStd.add(p.c); /* the EX30 doesn't answer this one: stop asking */
+    }
+    for (const p of pids) {
+      if (!p.on || pollStop) continue;
+      try {
+        if (p.hdr && p.hdr !== curHdr) { await cmd('ATSH' + p.hdr); curHdr = p.hdr; }
+        const b = payload(await cmd(p.cmd, 3000), p.cmd);
+        if (!b) continue;
+        const [A = 0, B = 0, Cc = 0, D = 0, E = 0, F = 0] = b;
+        const v = Function('A','B','C','D','E','F','bytes', '"use strict";return (' + p.f + ')')(A, B, Cc, D, E, F, b);
+        if (p.to === 'gear') S.gear = 'PRND'[v] || S.gear; else S[p.to] = v;
+      } catch (e) { log(p.name + ': ' + e.message); }
+    }
+    S.gear = S.gear || 'D';
+    await new Promise(r => setTimeout(r, 50));
+  }
+}
+const PNAMES = { 0x04:'motorbelasting',0x05:'koelvloeistof temp',0x0C:'toerental',0x0D:'snelheid',0x11:'gaspedaal',0x1F:'looptijd',0x21:'km met MIL',0x2F:'brandstof',0x31:'km sinds wissen',0x33:'luchtdruk',0x42:'module spanning',0x46:'buitentemp',0x49:'pedaalpositie D',0x4D:'tijd met MIL',0x51:'brandstoftype',0x5B:'hybride/EV accu %',0xA6:'kilometerstand' };
+async function scan() {
+  if (!ble.wr) { log('Eerst verbinden.'); return; }
+  pollStop = true; await new Promise(r => setTimeout(r, 300));
+  await cmd('ATSH7DF'); const found = [];
+  for (let base = 0; base < 0xC0; base += 0x20) {
+    const c = '01' + base.toString(16).toUpperCase().padStart(2, '0');
+    const b = payload(await cmd(c, 4000), c); if (!b || b.length < 4) break;
+    for (let i = 0; i < 32; i++) if (b[i >> 3] & (0x80 >> (i & 7))) found.push(base + i + 1);
+    if (!(b[3] & 1)) break;
+  }
+  log('Ondersteunde standaard-PIDs (mode 01):\n' + (found.length ? found.map(p => '01' + p.toString(16).toUpperCase().padStart(2,'0') + '  ' + (PNAMES[p] || '')).join('\n') : 'geen antwoord'));
+  if (source === 'obd') poll();
+}
+$('connect').addEventListener('click', connect);
+$('disconnect').addEventListener('click', () => { pollStop = true; try { ble.dev && ble.dev.gatt.disconnect(); } catch (e) {} });
+$('scan').addEventListener('click', scan);
+async function sendCmd() { const c = $('cmd').value.trim().toUpperCase(); if (!c) return; $('cmd').value = ''; log('> ' + c); log((await cmd(c, 5000)).replace(/\r/g, '\n')); }
+$('send').addEventListener('click', sendCmd);
+$('cmd').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); sendCmd(); } });
+$('copyLog').addEventListener('click', async () => { try { await navigator.clipboard.writeText(logEl.textContent); log('(log gekopieerd)'); } catch (e) { log('Kopiëren niet toegestaan hier; selecteer de tekst handmatig.'); } });
+$('tools').addEventListener('click', () => { $('drawer').classList.add('open'); renderPids(); });
+$('closeTools').addEventListener('click', () => $('drawer').classList.remove('open'));
+$('drawer').addEventListener('click', e => { if (e.target.id === 'drawer') $('drawer').classList.remove('open'); });
+
+/* ---------- custom PID editor ---------- */
+const TARGETS = [['power','Vermogen kW'],['soc','Accu %'],['range','Bereik km'],['temp','Accu °C'],['speed','Snelheid'],['gear','Versnelling 0-3 = P R N D']];
+const esc = s => String(s ?? '').replace(/[&<>"]/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[m]));
+function renderPids() {
+  $('pids').tBodies[0].innerHTML = pids.map((p, i) => `<tr data-i="${i}">
+    <td><input type="checkbox" data-k="on" ${p.on ? 'checked' : ''} style="min-height:auto"></td>
+    <td><input data-k="name" value="${esc(p.name)}"></td><td><input data-k="hdr" value="${esc(p.hdr)}" style="width:58px"></td>
+    <td><input data-k="cmd" value="${esc(p.cmd)}" style="width:82px"></td><td><input data-k="f" value="${esc(p.f)}"></td>
+    <td><select data-k="to">${TARGETS.map(([k, l]) => `<option value="${k}" ${p.to === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
+    <td><button class="btn" data-del="${i}" aria-label="Verwijder">×</button></td></tr>`).join('');
+}
+$('pids').addEventListener('input', e => { const tr = e.target.closest('tr'); if (!tr) return; const p = pids[+tr.dataset.i], k = e.target.dataset.k; p[k] = k === 'on' ? e.target.checked : e.target.value.trim(); });
+$('pids').addEventListener('click', e => { const d = e.target.dataset.del; if (d != null) { pids.splice(+d, 1); renderPids(); } });
+$('addPid').addEventListener('click', () => { pids.push({ on: true, name: 'Nieuw', hdr: '7E4', cmd: '22', f: 'A', to: 'power' }); renderPids(); });
+$('savePids').addEventListener('click', () => { try { localStorage.setItem('ex30dash.pids', JSON.stringify(pids)); log('PIDs opgeslagen.'); } catch (e) { log('Opslaan niet mogelijk in deze weergave.'); } });
+
+render();
+}
+</script>
+</body>
+</html>
