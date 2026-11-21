@@ -294,30 +294,61 @@ const logEl = $('log');
 function log(s) { logEl.textContent += s + '\n'; if (logEl.textContent.length > 20000) logEl.textContent = logEl.textContent.slice(-15000); logEl.scrollTop = logEl.scrollHeight; }
 const SERVICES = [0xfff0, 0xffe0, 0x18f0, 'e7810a71-73ae-499d-8c15-faa9aef0c3f2'];
 
+const errTxt = e => (e && (e.message || e.name)) || String(e);
+const hexId = u => (typeof u === 'number' ? u.toString(16).padStart(4, '0') : String(u)).toLowerCase();
+async function pickDevice() {
+  try {
+    return await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SERVICES });
+  } catch (e) {
+    const t = errTxt(e);
+    if (/cancel/i.test(t)) throw e;                       /* you closed the list yourself */
+    log('Alle apparaten tonen lukt niet (' + t + '), ik zoek gericht naar OBD-dongles…');
+    return await navigator.bluetooth.requestDevice({
+      filters: [{ services: [0xfff0] }, { services: [0xffe0] }, { services: [0x18f0] },
+                { namePrefix: 'IOS' }, { namePrefix: 'V-LINK' }, { namePrefix: 'Vgate' }, { namePrefix: 'vLink' }, { namePrefix: 'OBD' }],
+      optionalServices: SERVICES });
+  }
+}
 async function connect() {
   if (!navigator.bluetooth) { log('Web Bluetooth ontbreekt. Gebruik de Bluefy-browser op iPhone (Safari kan dit niet).'); status('Geen Bluetooth in deze browser', true); return; }
+  let step = 'apparaat kiezen';
   try {
-    ble.dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SERVICES });
-    log('Verbinden met ' + (ble.dev.name || 'dongle') + '…');
-    ble.dev.addEventListener('gattserverdisconnected', () => { ble.char = ble.wr = null; pollStop = true; status('Dongle losgekoppeld', true); log('Losgekoppeld'); });
+    log('1/4 Apparaat kiezen…');
+    ble.dev = await pickDevice();
+    log('2/4 Verbinden met ' + (ble.dev.name || 'dongle') + '…');
+    step = 'verbinden';
+    const onLost = () => { ble.char = ble.wr = null; pollStop = true; status('Dongle losgekoppeld', true); log('Losgekoppeld'); };
+    try { ble.dev.addEventListener('gattserverdisconnected', onLost); } catch (e) { ble.dev.ongattserverdisconnected = onLost; }
     const gatt = await ble.dev.gatt.connect();
-    for (const sv of await gatt.getPrimaryServices()) {
-      for (const c of await sv.getCharacteristics()) {
+    step = 'services zoeken';
+    log('3/4 Services zoeken…');
+    let services = [];
+    try { services = await gatt.getPrimaryServices(); }
+    catch (e) { for (const u of SERVICES) { try { services.push(await gatt.getPrimaryService(u)); } catch (e2) {} } }
+    log('   gevonden: ' + (services.map(sv => sv.uuid.slice(4, 8)).join(', ') || 'geen'));
+    ble.char = ble.wr = null;
+    for (const sv of services) {
+      let chars = [];
+      try { chars = await sv.getCharacteristics(); } catch (e) { continue; }
+      for (const c of chars) {
         if (!ble.char && (c.properties.notify || c.properties.indicate)) ble.char = c;
         if (!ble.wr && (c.properties.write || c.properties.writeWithoutResponse)) ble.wr = c;
       }
-      if (ble.char && ble.wr) break;
+      if (ble.char && ble.wr) { log('   OBD-kanaal: service ' + sv.uuid.slice(4, 8)); break; }
     }
-    if (!ble.char || !ble.wr) throw new Error('Geen bruikbare OBD-service gevonden');
+    if (!ble.char || !ble.wr) throw new Error('geen OBD-kanaal gevonden (lees/schrijf)');
+    step = 'meldingen aanzetten';
     await ble.char.startNotifications();
     ble.char.addEventListener('characteristicvaluechanged', e => {
       ble.buf += new TextDecoder().decode(e.target.value);
       if (ble.buf.includes('>') && ble.wait) { const r = ble.buf.replace('>', '').trim(); ble.buf = ''; const w = ble.wait; ble.wait = null; w(r); }
     });
+    step = 'dongle initialiseren';
+    log('4/4 Dongle initialiseren…');
     for (const c of ['ATZ', 'ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATAT1', 'ATSP0', '0100']) log(c + ' → ' + (await cmd(c, c === 'ATZ' || c === '0100' ? 6000 : 2500)).replace(/\r/g, ' '));
     status('OBD verbonden: ' + (ble.dev.name || 'dongle'));
     setSource('obd');
-  } catch (e) { log('Fout: ' + e.message); status('Verbinden mislukt: ' + e.message, true); }
+  } catch (e) { log('Fout bij ' + step + ': ' + errTxt(e)); status('Verbinden mislukt (' + step + ')', true); }
 }
 let q = Promise.resolve();
 function cmd(c, timeout = 2500) {
@@ -370,7 +401,7 @@ async function poll() {
         const [A = 0, B = 0, Cc = 0, D = 0, E = 0, F = 0] = b;
         const v = Function('A','B','C','D','E','F','bytes', '"use strict";return (' + p.f + ')')(A, B, Cc, D, E, F, b);
         if (p.to === 'gear') S.gear = 'PRND'[v] || S.gear; else S[p.to] = v;
-      } catch (e) { log(p.name + ': ' + e.message); }
+      } catch (e) { log(p.name + ': ' + errTxt(e)); }
     }
     S.gear = S.gear || 'D';
     await new Promise(r => setTimeout(r, 50));
