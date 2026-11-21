@@ -123,6 +123,7 @@ td input,td select{width:100%;font-size:14px;min-height:34px;padding:4px 6px}
   <div class="row" style="justify-content:space-between;align-items:center"><b style="font-size:18px">OBD-tools</b><button class="btn" id="closeTools">Sluiten</button></div>
   <p>Werkt met een Bluetooth LE OBD-dongle (Vgate iCar Pro BLE 4.0) in een browser met Web Bluetooth, zoals <b>Bluefy</b> op iPhone. Safari zelf ondersteunt geen Bluetooth.</p>
   <div class="row"><button class="btn pri" id="connect">Verbind dongle</button><button class="btn" id="disconnect">Verbreek</button><button class="btn" id="scan">Scan standaard-PIDs</button></div>
+  <div class="row"><button class="btn" id="alt1">Alternatief 1</button><button class="btn" id="alt2">Alternatief 2</button></div>
   <h2>Terminal</h2>
   <div id="log"></div>
   <div class="row"><input id="cmd" placeholder="bv. 010D of ATRV" autocapitalize="characters" autocomplete="off" spellcheck="false"><button class="btn" id="send">Stuur</button><button class="btn" id="copyLog">Kopieer log</button></div>
@@ -292,30 +293,32 @@ const ble = { dev: null, char: null, wr: null, buf: '', wait: null };
 let pollStop = true;
 const logEl = $('log');
 function log(s) { logEl.textContent += s + '\n'; if (logEl.textContent.length > 20000) logEl.textContent = logEl.textContent.slice(-15000); logEl.scrollTop = logEl.scrollHeight; }
-const SERVICES = [0xfff0, 0xffe0, 0x18f0, 'e7810a71-73ae-499d-8c15-faa9aef0c3f2'];
+const full = h => '0000' + h + '-0000-1000-8000-00805f9b34fb';
+const SERVICES = [full('fff0'), full('ffe0'), full('18f0'), 'e7810a71-73ae-499d-8c15-faa9aef0c3f2'];
 
 const errTxt = e => (e && (e.message || e.name)) || String(e);
 const hexId = u => (typeof u === 'number' ? u.toString(16).padStart(4, '0') : String(u)).toLowerCase();
-async function pickDevice() {
-  try {
-    return await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: SERVICES });
-  } catch (e) {
+const PICK = {
+  std:  () => ({ acceptAllDevices: true, optionalServices: SERVICES }),
+  alt1: () => ({ acceptAllDevices: true }),
+  alt2: () => ({ filters: ['IOS', 'V-LINK', 'Vgate', 'vLink', 'OBD', 'Android'].map(n => ({ namePrefix: n })), optionalServices: SERVICES }),
+};
+async function pickDevice(variant) {
+  const opts = PICK[variant]();
+  log('   methode: ' + variant);
+  try { return await navigator.bluetooth.requestDevice(opts); }
+  catch (e) {
     const t = errTxt(e);
-    if (/cancel/i.test(t)) throw e;                       /* you closed the list yourself */
-    if (String(t).trim() === '2') throw new Error('Bluefy heeft geen Bluetooth-toestemming. iPhone Instellingen → Privacy en beveiliging → Bluetooth → zet Bluefy aan, en zet Bluetooth zelf aan.');
-    log('Alle apparaten tonen lukt niet (' + t + '), ik zoek gericht naar OBD-dongles…');
-    return await navigator.bluetooth.requestDevice({
-      filters: [{ services: [0xfff0] }, { services: [0xffe0] }, { services: [0x18f0] },
-                { namePrefix: 'IOS' }, { namePrefix: 'V-LINK' }, { namePrefix: 'Vgate' }, { namePrefix: 'vLink' }, { namePrefix: 'OBD' }],
-      optionalServices: SERVICES });
+    if (/cancel/i.test(t)) throw e;
+    throw new Error('Bluefy weigert de apparatenlijst (code ' + t + '). Probeer "Alternatief 1" en "Alternatief 2" hieronder.');
   }
 }
-async function connect() {
+async function connect(variant = 'std') {
   if (!navigator.bluetooth) { log('Web Bluetooth ontbreekt. Gebruik de Bluefy-browser op iPhone (Safari kan dit niet).'); status('Geen Bluetooth in deze browser', true); return; }
   let step = 'apparaat kiezen';
   try {
     log('1/4 Apparaat kiezen…');
-    ble.dev = await pickDevice();
+    ble.dev = await pickDevice(variant);
     log('2/4 Verbinden met ' + (ble.dev.name || 'dongle') + '…');
     step = 'verbinden';
     const onLost = () => { ble.char = ble.wr = null; pollStop = true; status('Dongle losgekoppeld', true); log('Losgekoppeld'); };
@@ -422,7 +425,9 @@ async function scan() {
   log('Ondersteunde standaard-PIDs (mode 01):\n' + (found.length ? found.map(p => '01' + p.toString(16).toUpperCase().padStart(2,'0') + '  ' + (PNAMES[p] || '')).join('\n') : 'geen antwoord'));
   if (source === 'obd') poll();
 }
-$('connect').addEventListener('click', connect);
+$('connect').addEventListener('click', () => connect('std'));
+$('alt1').addEventListener('click', () => connect('alt1'));
+$('alt2').addEventListener('click', () => connect('alt2'));
 $('disconnect').addEventListener('click', () => { pollStop = true; try { ble.dev && ble.dev.gatt.disconnect(); } catch (e) {} });
 $('scan').addEventListener('click', scan);
 async function sendCmd() { const c = $('cmd').value.trim().toUpperCase(); if (!c) return; $('cmd').value = ''; log('> ' + c); log((await cmd(c, 5000)).replace(/\r/g, '\n')); }
