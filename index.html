@@ -261,16 +261,16 @@ function setSource(s) {
   if (s === 'demo') { status('Demo: gesimuleerde rit'); return; }
   Object.assign(S, { speed: 0, power: null, soc: null, range: null, limit: 0, lights: false, temp: null, volt: null, amp: null });
   if (s === 'gps') startGps();
-  if (s === 'obd') { status(ble.char ? 'OBD verbonden' : 'OBD: open OBD-tools en verbind de dongle'); if (ble.char) poll(); }
+  if (s === 'obd') { status(ble.char ? 'OBD verbonden · snelheid via GPS' : 'OBD: open OBD-tools en verbind de dongle'); startGps(true); if (ble.char) poll(); }
   render();
 }
 $('srcDemo').addEventListener('click', () => setSource('demo'));
 $('srcGps').addEventListener('click', () => setSource('gps'));
 $('srcObd').addEventListener('click', () => setSource('obd'));
 
-function startGps() {
+function startGps(quiet) {
   if (!('geolocation' in navigator)) { status('Geen GPS in deze browser', true); return; }
-  status('GPS: wachten op signaal…');
+  if (!quiet) status('GPS: wachten op signaal…');
   try {
     gpsWatch = navigator.geolocation.watchPosition(p => {
       let v = p.coords.speed;
@@ -282,7 +282,7 @@ function startGps() {
         v = s > 0 ? d / s : 0;
       }
       lastFix = p; S.speed = Math.max(0, (v || 0) * 3.6); S.gear = 'D';
-      status(`GPS: ±${Math.round(p.coords.accuracy)} m (alleen snelheid en afstand)`);
+      if (!quiet) status(`GPS: ±${Math.round(p.coords.accuracy)} m (alleen snelheid en afstand)`);
     }, e => status(e.code === 1 ? 'GPS geweigerd. Open deze pagina rechtstreeks in Safari of Bluefy en sta locatie toe.' : 'GPS-fout: ' + e.message, true),
     { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
   } catch (e) { status('GPS niet beschikbaar hier', true); }
@@ -386,11 +386,12 @@ let pids = [];
 try { pids = JSON.parse(localStorage.getItem('ex30dash.pids') || '[]'); } catch (e) {}
 const SEA_BMS = 'ATH0;ATAL;ATST64;ATSP0;ATSH7DF;0100;ATSHD01635;ATCP1D;ATSP7;ATCRA1EC6AE80';
 let pidsV = null; try { pidsV = localStorage.getItem('ex30dash.pidsV'); } catch (e) {}
-if (pidsV !== '2') pids = [];   /* older defaults were wrong: start fresh */
+if (pidsV !== '3') pids = [];   /* older defaults were wrong: start fresh */
 if (!pids.length) pids = [
   { on: true, name: 'Accu % (BMS)',    init: SEA_BMS, cmd: '224801', f: '((A*256+B)*0.002-3)/94*100', to: 'soc' },
   { on: true, name: 'Accu stroom A',   init: SEA_BMS, cmd: '224802', f: '0.1*((A*256+B)-16384)', to: 'amp' },
   { on: true, name: 'Accu spanning V', init: SEA_BMS, cmd: '224803', f: '0.01*(A*256+B)', to: 'volt' },
+  { on: true, name: 'Accu temp gem.',  init: SEA_BMS, cmd: '22491B', f: '(A*256+B)/256', to: 'temp' },
 ];
 const deadStd = new Set();
 async function poll() {
@@ -475,7 +476,7 @@ function renderPids() {
 $('pids').addEventListener('input', e => { const tr = e.target.closest('tr'); if (!tr) return; const p = pids[+tr.dataset.i], k = e.target.dataset.k; p[k] = k === 'on' ? e.target.checked : e.target.value.trim(); });
 $('pids').addEventListener('click', e => { const d = e.target.dataset.del; if (d != null) { pids.splice(+d, 1); renderPids(); } });
 $('addPid').addEventListener('click', () => { pids.push({ on: true, name: 'Nieuw', init: SEA_BMS, cmd: '22', f: 'A', to: 'power' }); renderPids(); });
-$('savePids').addEventListener('click', () => { try { localStorage.setItem('ex30dash.pids', JSON.stringify(pids)); localStorage.setItem('ex30dash.pidsV', '2'); log('PIDs opgeslagen.'); } catch (e) { log('Opslaan niet mogelijk in deze weergave.'); } });
+$('savePids').addEventListener('click', () => { try { localStorage.setItem('ex30dash.pids', JSON.stringify(pids)); localStorage.setItem('ex30dash.pidsV', '3'); log('PIDs opgeslagen.'); } catch (e) { log('Opslaan niet mogelijk in deze weergave.'); } });
 
 render();
 }
