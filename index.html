@@ -129,9 +129,9 @@ td input,td select{width:100%;font-size:14px;min-height:34px;padding:4px 6px}
   <div class="row"><input id="cmd" placeholder="bv. 010D of ATRV" autocapitalize="characters" autocomplete="off" spellcheck="false"><button class="btn" id="send">Stuur</button><button class="btn" id="copyLog">Kopieer log</button></div>
   <h2>Eigen PIDs (EX30-specifiek)</h2>
   <p>Vul hier de waarden in die je in Car Scanner vindt. Init = AT-commando's voor die module, gescheiden door ; (adres, filters), commando = bv. 22xxxx, formule met A, B, C, D (de eerste bytes na het antwoord). Doel = welk veld op het scherm.</p>
-  <table id="pids"><thead><tr><td>Aan</td><td>Naam</td><td>Init</td><td>Cmd</td><td>Formule</td><td>Doel</td><td></td></tr></thead><tbody></tbody></table>
+  <table id="pids"><thead><tr><td>Aan</td><td>Naam</td><td>Init</td><td>Cmd</td><td>Elke</td><td>Formule</td><td>Doel</td><td></td></tr></thead><tbody></tbody></table>
   <div class="row"><button class="btn" id="addPid">+ PID</button><button class="btn" id="savePids">Opslaan</button></div>
-  <p class="note">Standaard gepolld: 010D snelheid, 015B accu %, 0146 buitentemp. Wat de EX30 niet beantwoordt, blijft "--".</p>
+  <p class="note">De EX30 ondersteunt geen standaard OBD-waarden; alles komt van de modules hierboven. "Elke" = om de hoeveel rondes een waarde gelezen wordt.</p>
 </div></div>
 
 <script>
@@ -252,7 +252,7 @@ function status(msg, err) { const s = $('status'); s.textContent = msg; s.classL
 $('resetTrip').addEventListener('click', () => { trip.km = trip.used = trip.regen = 0; eH.fill(0); dH.fill(0); filled = 0; render(); });
 
 /* ---------- sources ---------- */
-let gpsWatch = null, lastFix = null;
+let gpsWatch = null, lastFix = null, carSpeedT = 0;
 function setSource(s) {
   source = s; keepAwake();
   for (const [id, k] of [['srcDemo','demo'],['srcGps','gps'],['srcObd','obd']]) $(id).classList.toggle('on', k === s);
@@ -261,7 +261,7 @@ function setSource(s) {
   if (s === 'demo') { status('Demo: gesimuleerde rit'); return; }
   Object.assign(S, { speed: 0, power: null, soc: null, range: null, limit: 0, lights: false, temp: null, volt: null, amp: null });
   if (s === 'gps') startGps();
-  if (s === 'obd') { status(ble.char ? 'OBD verbonden · snelheid via GPS' : 'OBD: open OBD-tools en verbind de dongle'); startGps(true); if (ble.char) poll(); }
+  if (s === 'obd') { status(ble.char ? 'OBD verbonden' : 'OBD: open OBD-tools en verbind de dongle'); startGps(true); if (ble.char) poll(); }
   render();
 }
 $('srcDemo').addEventListener('click', () => setSource('demo'));
@@ -281,7 +281,9 @@ function startGps(quiet) {
         const d = 2 * R * Math.asin(Math.sqrt(h)), s = (p.timestamp - lastFix.timestamp) / 1000;
         v = s > 0 ? d / s : 0;
       }
-      lastFix = p; S.speed = Math.max(0, (v || 0) * 3.6); S.gear = 'D';
+      lastFix = p;
+      if (Date.now() - carSpeedT > 3000) S.speed = Math.max(0, (v || 0) * 3.6);   /* car speed wins when available */
+      S.gear = 'D';
       if (!quiet) status(`GPS: ±${Math.round(p.coords.accuracy)} m (alleen snelheid en afstand)`);
     }, e => status(e.code === 1 ? 'GPS geweigerd. Open deze pagina rechtstreeks in Safari of Bluefy en sta locatie toe.' : 'GPS-fout: ' + e.message, true),
     { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
@@ -384,41 +386,41 @@ const STD = [
 ];
 let pids = [];
 try { pids = JSON.parse(localStorage.getItem('ex30dash.pids') || '[]'); } catch (e) {}
-const SEA_BMS = 'ATH0;ATAL;ATST64;ATSP0;ATSH7DF;0100;ATSHD01635;ATCP1D;ATSP7;ATCRA1EC6AE80';
+/* EX30 (Geely SEA): 29-bit CAN, addresses taken from a Car Scanner log */
+const PRELUDE = 'ATH0;ATAL;ATST64;ATSP0;ATSH7DF;0100;ATCP1D;ATSP7;ATFCSD300000;ATFCSM1';
+const SEA_BMS = 'ATSHD01635;ATCRA1EC6AE80;ATFCSH1DD01635';   /* battery (BECM) */
+const SEA_SPD = 'ATSHD01701;ATCRA1EE02E80;ATFCSH1DD01701';   /* module with vehicle speed */
 let pidsV = null; try { pidsV = localStorage.getItem('ex30dash.pidsV'); } catch (e) {}
-if (pidsV !== '3') pids = [];   /* older defaults were wrong: start fresh */
+if (pidsV !== '4') pids = [];   /* older defaults were wrong: start fresh */
 if (!pids.length) pids = [
-  { on: true, name: 'Accu % (BMS)',    init: SEA_BMS, cmd: '224801', f: '((A*256+B)*0.002-3)/94*100', to: 'soc' },
-  { on: true, name: 'Accu stroom A',   init: SEA_BMS, cmd: '224802', f: '0.1*((A*256+B)-16384)', to: 'amp' },
-  { on: true, name: 'Accu spanning V', init: SEA_BMS, cmd: '224803', f: '0.01*(A*256+B)', to: 'volt' },
-  { on: true, name: 'Accu temp gem.',  init: SEA_BMS, cmd: '22491B', f: '(A*256+B)/256', to: 'temp' },
+  { on: true, name: 'Snelheid',        init: SEA_SPD, cmd: '22F40D', f: 'A', to: 'speed', every: 1 },
+  { on: true, name: 'Accu stroom A',   init: SEA_BMS, cmd: '224802', f: '0.1*((A*256+B)-16384)', to: 'amp', every: 1 },
+  { on: true, name: 'Accu spanning V', init: SEA_BMS, cmd: '224803', f: '0.01*(A*256+B)', to: 'volt', every: 1 },
+  { on: true, name: 'Accu % (BMS)',    init: SEA_BMS, cmd: '224801', f: '((A*256+B)*0.002-3)/94*100', to: 'soc', every: 10 },
+  { on: true, name: 'Accu temp gem.',  init: SEA_BMS, cmd: '22491B', f: '(A*256+B)/256', to: 'temp', every: 20 },
 ];
 const deadStd = new Set();
 async function poll() {
   pollStop = false;
-  let curHdr = '';
+  let curHdr = '', cycle = 0;
+  for (const c of PRELUDE.split(';')) await cmd(c, c === '0100' ? 6000 : 2500);
   while (!pollStop && ble.wr) {
-    for (const p of STD) {
-      if (deadStd.has(p.c) || pollStop) continue;
-      if (curHdr) { for (const c of ['ATCRA', 'ATSP0', 'ATSH7DF']) await cmd(c); curHdr = ''; }
-      const b = payload(await cmd(p.c), p.c);
-      if (b && b.length) { const v = p.f(b); if (p.to === 'ambient') S.ambient = v; else S[p.to] = v; }
-      else deadStd.add(p.c); /* the EX30 doesn't answer this one: stop asking */
-    }
     for (const p of pids) {
-      if (!p.on || pollStop) continue;
+      if (!p.on || pollStop || cycle % (p.every || 1)) continue;
       try {
         if (p.init && p.init !== curHdr) { for (const c of p.init.split(/[;\s]+/).filter(Boolean)) await cmd(c.toUpperCase()); curHdr = p.init; }
         const b = payload(await cmd(p.cmd, 3000), p.cmd);
         if (!b) continue;
         const [A = 0, B = 0, Cc = 0, D = 0, E = 0, F = 0] = b;
         const v = Function('A','B','C','D','E','F','bytes', '"use strict";return (' + p.f + ')')(A, B, Cc, D, E, F, b);
-        if (p.to === 'gear') S.gear = 'PRND'[v] || S.gear; else S[p.to] = v;
+        if (p.to === 'gear') S.gear = 'PRND'[v] || S.gear;
+        else { S[p.to] = v; if (p.to === 'speed') carSpeedT = Date.now(); }
       } catch (e) { log(p.name + ': ' + errTxt(e)); }
     }
-    if (S.volt != null && S.amp != null) S.power = S.volt * S.amp / 1000;   /* sign checked on the first drive */
+    if (S.volt != null && S.amp != null) S.power = S.volt * S.amp / 1000;   /* + = from battery */
     S.gear = S.gear || 'D';
-    await new Promise(r => setTimeout(r, 50));
+    cycle++;
+    await new Promise(r => setTimeout(r, 30));
   }
 }
 const PNAMES = { 0x04:'motorbelasting',0x05:'koelvloeistof temp',0x0C:'toerental',0x0D:'snelheid',0x11:'gaspedaal',0x1F:'looptijd',0x21:'km met MIL',0x2F:'brandstof',0x31:'km sinds wissen',0x33:'luchtdruk',0x42:'module spanning',0x46:'buitentemp',0x49:'pedaalpositie D',0x4D:'tijd met MIL',0x51:'brandstoftype',0x5B:'hybride/EV accu %',0xA6:'kilometerstand' };
@@ -469,14 +471,14 @@ function renderPids() {
   $('pids').tBodies[0].innerHTML = pids.map((p, i) => `<tr data-i="${i}">
     <td><input type="checkbox" data-k="on" ${p.on ? 'checked' : ''} style="min-height:auto"></td>
     <td><input data-k="name" value="${esc(p.name)}"></td><td><input data-k="init" value="${esc(p.init)}" style="width:90px"></td>
-    <td><input data-k="cmd" value="${esc(p.cmd)}" style="width:82px"></td><td><input data-k="f" value="${esc(p.f)}"></td>
+    <td><input data-k="cmd" value="${esc(p.cmd)}" style="width:82px"></td><td><input data-k="every" value="${esc(p.every || 1)}" style="width:44px" inputmode="numeric"></td><td><input data-k="f" value="${esc(p.f)}"></td>
     <td><select data-k="to">${TARGETS.map(([k, l]) => `<option value="${k}" ${p.to === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
     <td><button class="btn" data-del="${i}" aria-label="Verwijder">×</button></td></tr>`).join('');
 }
-$('pids').addEventListener('input', e => { const tr = e.target.closest('tr'); if (!tr) return; const p = pids[+tr.dataset.i], k = e.target.dataset.k; p[k] = k === 'on' ? e.target.checked : e.target.value.trim(); });
+$('pids').addEventListener('input', e => { const tr = e.target.closest('tr'); if (!tr) return; const p = pids[+tr.dataset.i], k = e.target.dataset.k; p[k] = k === 'on' ? e.target.checked : k === 'every' ? Math.max(1, parseInt(e.target.value) || 1) : e.target.value.trim(); });
 $('pids').addEventListener('click', e => { const d = e.target.dataset.del; if (d != null) { pids.splice(+d, 1); renderPids(); } });
-$('addPid').addEventListener('click', () => { pids.push({ on: true, name: 'Nieuw', init: SEA_BMS, cmd: '22', f: 'A', to: 'power' }); renderPids(); });
-$('savePids').addEventListener('click', () => { try { localStorage.setItem('ex30dash.pids', JSON.stringify(pids)); localStorage.setItem('ex30dash.pidsV', '3'); log('PIDs opgeslagen.'); } catch (e) { log('Opslaan niet mogelijk in deze weergave.'); } });
+$('addPid').addEventListener('click', () => { pids.push({ on: true, name: 'Nieuw', init: SEA_BMS, cmd: '22', f: 'A', to: 'power', every: 1 }); renderPids(); });
+$('savePids').addEventListener('click', () => { try { localStorage.setItem('ex30dash.pids', JSON.stringify(pids)); localStorage.setItem('ex30dash.pidsV', '4'); log('PIDs opgeslagen.'); } catch (e) { log('Opslaan niet mogelijk in deze weergave.'); } });
 
 render();
 }
