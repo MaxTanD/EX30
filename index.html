@@ -140,7 +140,7 @@ const $ = id => document.getElementById(id);
 const DEMO_LIMITS = true;
 
 /* ---------- state ---------- */
-const S = { speed: 0, power: null, soc: null, range: null, gear: 'D', limit: 0, lights: false, wiper: false, temp: null };
+const S = { speed: 0, power: null, soc: null, range: null, gear: 'D', limit: 0, lights: false, wiper: false, temp: null, volt: null, amp: null };
 let source = 'demo';
 let cardMode = 0;
 
@@ -259,7 +259,7 @@ function setSource(s) {
   if (gpsWatch != null) { navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null; }
   if (s !== 'obd') pollStop = true;
   if (s === 'demo') { status('Demo: gesimuleerde rit'); return; }
-  Object.assign(S, { speed: 0, power: null, soc: null, range: null, limit: 0, lights: false, temp: null });
+  Object.assign(S, { speed: 0, power: null, soc: null, range: null, limit: 0, lights: false, temp: null, volt: null, amp: null });
   if (s === 'gps') startGps();
   if (s === 'obd') { status(ble.char ? 'OBD verbonden' : 'OBD: open OBD-tools en verbind de dongle'); if (ble.char) poll(); }
   render();
@@ -384,10 +384,14 @@ const STD = [
 ];
 let pids = [];
 try { pids = JSON.parse(localStorage.getItem('ex30dash.pids') || '[]'); } catch (e) {}
-const SEA_BMS = 'ATSP7;ATCP1D;ATSHD01635;ATCRA1EC6AE80;ATFCSH1DD01635;ATFCSD300000;ATFCSM1';
-for (const p of pids) if (p.hdr && !p.init) { p.init = 'ATSH' + p.hdr; delete p.hdr; }
-if (!pids.length || !pids.some(p => p.cmd === '224801'))
-  pids.unshift({ on: true, name: 'Accu % (SEA-BMS, test)', init: SEA_BMS, cmd: '224801', f: '(A*256+B)/470-150/47', to: 'soc' });
+const SEA_BMS = 'ATH0;ATAL;ATST64;ATSP0;ATSH7DF;0100;ATSHD01635;ATCP1D;ATSP7;ATCRA1EC6AE80';
+let pidsV = null; try { pidsV = localStorage.getItem('ex30dash.pidsV'); } catch (e) {}
+if (pidsV !== '2') pids = [];   /* older defaults were wrong: start fresh */
+if (!pids.length) pids = [
+  { on: true, name: 'Accu % (BMS)',    init: SEA_BMS, cmd: '224801', f: '((A*256+B)*0.002-3)/94*100', to: 'soc' },
+  { on: true, name: 'Accu stroom A',   init: SEA_BMS, cmd: '224802', f: '0.1*((A*256+B)-16384)', to: 'amp' },
+  { on: true, name: 'Accu spanning V', init: SEA_BMS, cmd: '224803', f: '0.01*(A*256+B)', to: 'volt' },
+];
 const deadStd = new Set();
 async function poll() {
   pollStop = false;
@@ -411,6 +415,7 @@ async function poll() {
         if (p.to === 'gear') S.gear = 'PRND'[v] || S.gear; else S[p.to] = v;
       } catch (e) { log(p.name + ': ' + errTxt(e)); }
     }
+    if (S.volt != null && S.amp != null) S.power = S.volt * S.amp / 1000;   /* sign checked on the first drive */
     S.gear = S.gear || 'D';
     await new Promise(r => setTimeout(r, 50));
   }
@@ -441,10 +446,9 @@ async function probe() {
     log('--- ' + title);
     for (const c of list) { const r = await cmd(c, c.startsWith('22') ? 6000 : 2500); log(c + ' → ' + r.replace(/\r/g, ' | ')); }
   };
-  await run('A. Wie antwoordt? (29-bit, alle modules, VIN)', ['ATH1', 'ATAR', 'ATSP7', 'ATCP18', 'ATSHDB33F1', '22F190', '22F18C']);
-  await run('B. Wie antwoordt? (11-bit, alle modules, VIN)', ['ATSP6', 'ATSH7DF', '22F190']);
-  await run('C. Accu-module (SEA-platform) 224801', SEA_BMS.split(';').concat(['224801']));
-  await run('D. Terug naar normaal', ['ATH0', 'ATAR', 'ATCRA', 'ATSP0', 'ATSH7DF']);
+  await run('A. Smart #1-volgorde (zelfde platform als EX30)', ['ATD', 'ATD0', 'ATE0', 'ATH1', 'ATSP0', 'ATM0', 'ATS0', 'ATAT1', 'ATAL', 'ATST64', 'ATAR', 'ATSH7DF', '0100', 'ATSHD01635', 'ATCP1D', 'ATSP7', 'ATCRA1EC6AE80']);
+  await run('B. Accu-module: % / stroom / spanning / temperaturen', ['224801', '224802', '224803', '224804', '224945', '22491B']);
+  await run('C. Terug naar normaal', ['ATD', 'ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATAT1', 'ATSP0', 'ATSH7DF']);
   log('Klaar. Tik Kopieer log en stuur het door.');
   if (source === 'obd') poll();
 }
@@ -458,7 +462,7 @@ $('closeTools').addEventListener('click', () => $('drawer').classList.remove('op
 $('drawer').addEventListener('click', e => { if (e.target.id === 'drawer') $('drawer').classList.remove('open'); });
 
 /* ---------- custom PID editor ---------- */
-const TARGETS = [['power','Vermogen kW'],['soc','Accu %'],['range','Bereik km'],['temp','Accu °C'],['speed','Snelheid'],['gear','Versnelling 0-3 = P R N D']];
+const TARGETS = [['power','Vermogen kW'],['amp','Accu stroom A'],['volt','Accu spanning V'],['soc','Accu %'],['range','Bereik km'],['temp','Accu °C'],['speed','Snelheid'],['gear','Versnelling 0-3 = P R N D']];
 const esc = s => String(s ?? '').replace(/[&<>"]/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[m]));
 function renderPids() {
   $('pids').tBodies[0].innerHTML = pids.map((p, i) => `<tr data-i="${i}">
@@ -471,7 +475,7 @@ function renderPids() {
 $('pids').addEventListener('input', e => { const tr = e.target.closest('tr'); if (!tr) return; const p = pids[+tr.dataset.i], k = e.target.dataset.k; p[k] = k === 'on' ? e.target.checked : e.target.value.trim(); });
 $('pids').addEventListener('click', e => { const d = e.target.dataset.del; if (d != null) { pids.splice(+d, 1); renderPids(); } });
 $('addPid').addEventListener('click', () => { pids.push({ on: true, name: 'Nieuw', init: SEA_BMS, cmd: '22', f: 'A', to: 'power' }); renderPids(); });
-$('savePids').addEventListener('click', () => { try { localStorage.setItem('ex30dash.pids', JSON.stringify(pids)); log('PIDs opgeslagen.'); } catch (e) { log('Opslaan niet mogelijk in deze weergave.'); } });
+$('savePids').addEventListener('click', () => { try { localStorage.setItem('ex30dash.pids', JSON.stringify(pids)); localStorage.setItem('ex30dash.pidsV', '2'); log('PIDs opgeslagen.'); } catch (e) { log('Opslaan niet mogelijk in deze weergave.'); } });
 
 render();
 }
