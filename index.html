@@ -302,6 +302,7 @@ async function pickDevice() {
   } catch (e) {
     const t = errTxt(e);
     if (/cancel/i.test(t)) throw e;                       /* you closed the list yourself */
+    if (String(t).trim() === '2') throw new Error('Bluefy heeft geen Bluetooth-toestemming. iPhone Instellingen → Privacy en beveiliging → Bluetooth → zet Bluefy aan, en zet Bluetooth zelf aan.');
     log('Alle apparaten tonen lukt niet (' + t + '), ik zoek gericht naar OBD-dongles…');
     return await navigator.bluetooth.requestDevice({
       filters: [{ services: [0xfff0] }, { services: [0xffe0] }, { services: [0x18f0] },
